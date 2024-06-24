@@ -11,22 +11,25 @@ module.exports = async (logSources, printer) => {
   const logQueue = new Heap(logComparator);
 
   // Populate min-heap with data from all log sources
-  for (const logSource of logSources) {
-    const logEntry = await logSource.popAsync();
+  const entries = (
+    await Promise.all(logSources.map((logSource) => logSource.popAsync()))
+  ).map((logEntry, i) => ({ logEntry, sourceIndex: i }));
+  logQueue.init(entries);
 
-    if (!!logEntry) {
-      logQueue.push({ logEntry, logSource });
-    }
-  }
+  // Introduce a log entry cache to start promises for new log entries early on each source
+  const logEntryCache = logSources.map((logSource) => logSource.popAsync());
 
   // Continuously pop/push off min-heap until all sources are drained
   while (logQueue.length) {
-    const { logEntry, logSource } = logQueue.pop();
+    const { logEntry, sourceIndex } = logQueue.pop();
     printer.print(logEntry);
 
-    const newEntry = await logSource.pop();
+    const newEntry = await logEntryCache[sourceIndex];
     if (!!newEntry) {
-      logQueue.push({ logEntry: newEntry, logSource });
+      // add the new entry onto the heap
+      logQueue.push({ logEntry: newEntry, sourceIndex });
+      // repopulate the cache
+      logEntryCache[sourceIndex] = logSources[sourceIndex].popAsync();
     }
   }
   printer.done();
